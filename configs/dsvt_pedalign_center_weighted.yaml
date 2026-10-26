@@ -1,0 +1,157 @@
+CLASS_NAMES: ['vehicle', 'pedestrian', 'truck']
+
+DATA_CONFIG:
+    DATASET: 'CustomDataset'
+    DATA_PATH: 'data/openpcdet_training_data'
+    POINT_CLOUD_RANGE: [-40, -40, -8, 40, 40, 2]
+    MAP_CLASS_TO_KITTI: {'vehicle': 'Car', 'pedestrian': 'Pedestrian', 'truck': 'Cyclist'}
+    DATA_SPLIT: {'train': train, 'test': val}
+    INFO_PATH:
+        train: [custom_infos_train_compat.pkl]
+        test: [custom_infos_val_compat.pkl]
+    POINT_FEATURE_ENCODING:
+        encoding_type: absolute_coordinates_encoding
+        used_feature_list: ['x', 'y', 'z']
+        src_feature_list: ['x', 'y', 'z', 'intensity']
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: []
+        AUG_CONFIG_LIST:
+            - NAME: gt_sampling
+              USE_ROAD_PLANE: False
+              DB_INFO_PATH: [../openpcdet_g0s_seq250/shared_ped_dbinfos_compat.pkl]
+              PREPARE: {filter_by_min_points: ['pedestrian:3']}
+              SAMPLE_GROUPS: ['pedestrian:20']
+              NUM_POINT_FEATURES: 4
+              DATABASE_WITH_FAKELIDAR: False
+              REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+              LIMIT_WHOLE_SCENE: True
+            - NAME: v2x_sensor_vfield
+              PROBABILITY: 0.85
+              MAX_DEFORM: 0.08
+              RANGE_NOISE_STD: 0.025
+              DROP_RATE: [0.0, 0.12]
+            - NAME: v2x_ped_align
+              PROBABILITY: 0.95
+              REAL_DIMS: [0.68, 0.69, 1.74]
+              DIM_STD: [0.05, 0.05, 0.07]
+              KEEP_ORIGINAL_PROB: 0.0
+              SPARSE_PROB: 0.6
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x', 'y']
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.392699, 0.392699]
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {'train': True, 'test': False}
+        - NAME: transform_points_to_voxels_placeholder
+          VOXEL_SIZE: [0.20, 0.20, 10.0]
+
+MODEL:
+    NAME: CenterPoint
+    VFE:
+        NAME: DynamicVoxelVFE
+        WITH_DISTANCE: False
+        USE_ABSLOTE_XYZ: True
+        USE_NORM: True
+        NUM_FILTERS: [128, 128]
+    BACKBONE_3D:
+        NAME: DSVT
+        INPUT_LAYER:
+            sparse_shape: [400, 400, 1]
+            downsample_stride: []
+            d_model: [128]
+            set_info: [[36, 4]]
+            window_shape: [[10, 10, 1]]
+            hybrid_factor: [2, 2, 1]
+            shifts_list: [[[0, 0, 0], [5, 5, 0]]]
+            normalize_pos: False
+        block_name: ['DSVTBlock']
+        set_info: [[36, 4]]
+        d_model: [128]
+        nhead: [8]
+        dim_feedforward: [256]
+        dropout: 0.0
+        activation: gelu
+        output_shape: [400, 400]
+        conv_out_channel: 128
+        USE_CHECKPOINT: True
+    MAP_TO_BEV:
+        NAME: PointPillarScatter3d
+        INPUT_SHAPE: [400, 400, 1]
+        NUM_BEV_FEATURES: 128
+    BACKBONE_2D:
+        NAME: BaseBEVResBackbone
+        LAYER_NUMS: [1, 2, 2]
+        LAYER_STRIDES: [1, 2, 2]
+        NUM_FILTERS: [128, 128, 256]
+        UPSAMPLE_STRIDES: [1, 2, 4]
+        NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+    DENSE_HEAD:
+        NAME: CenterHead
+        CLASS_AGNOSTIC: False
+        CLASS_NAMES_EACH_HEAD: [['vehicle', 'pedestrian', 'truck']]
+        SHARED_CONV_CHANNEL: 64
+        USE_BIAS_BEFORE_NORM: False
+        NUM_HM_CONV: 2
+        BN_EPS: 0.001
+        BN_MOM: 0.01
+        SEPARATE_HEAD_CFG:
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_DICT:
+                center: {out_channels: 2, num_conv: 2}
+                center_z: {out_channels: 1, num_conv: 2}
+                dim: {out_channels: 3, num_conv: 2}
+                rot: {out_channels: 2, num_conv: 2}
+                iou: {out_channels: 1, num_conv: 2}
+        TARGET_ASSIGNER_CONFIG:
+            FEATURE_MAP_STRIDE: 1
+            NUM_MAX_OBJS: 500
+            GAUSSIAN_OVERLAP: 0.1
+            MIN_RADIUS: 2
+        IOU_REG_LOSS: True
+        LOSS_CONFIG:
+            LOSS_WEIGHTS:
+                cls_weight: 1.0
+                loc_weight: 2.0
+                code_weights: [2.0, 2.0, 1.5, 1, 1, 1, 1, 1]
+        POST_PROCESSING:
+            SCORE_THRESH: 0.03
+            POST_CENTER_LIMIT_RANGE: [-40, -40, -8, 40, 40, 2]
+            MAX_OBJ_PER_SAMPLE: 500
+            USE_IOU_TO_RECTIFY_SCORE: True
+            IOU_RECTIFIER: [0.68, 0.71, 0.65]
+            NMS_CONFIG:
+                NMS_TYPE: class_specific_nms
+                NMS_THRESH: [0.70, 0.55, 0.60]
+                NMS_PRE_MAXSIZE: [4096, 4096, 4096]
+                NMS_POST_MAXSIZE: [500, 500, 500]
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        EVAL_METRIC: kitti
+
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 8
+    NUM_EPOCHS: 60
+    OPTIMIZER: adam_onecycle
+    LR: 0.003
+    WEIGHT_DECAY: 0.05
+    MOMENTUM: 0.9
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.2
+    DIV_FACTOR: 20
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+    GRAD_NORM_CLIP: 10
+    USE_AMP: False
+
+HOOK:
+    DisableAugmentationHook:
+        DISABLE_AUG_LIST: ['gt_sampling', 'v2x_sensor_vfield', 'v2x_ped_align', 'random_world_flip', 'random_world_rotation', 'random_world_scaling']
+        NUM_LAST_EPOCHS: 1
