@@ -1,4 +1,4 @@
-# ECCV Submission Reproduction Package — v17
+# ECCV Submission Reproduction Package
 
 This self-contained package includes data-generation code, detector training
 code, six trained checkpoints, and inference, fusion, and packaging scripts.
